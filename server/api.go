@@ -19,13 +19,14 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
-	"go.opencensus.io/stats"
-	"go.opencensus.io/tag"
-	"go.opencensus.io/trace"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"go.opencensus.io/stats"
+	"go.opencensus.io/tag"
+	"go.opencensus.io/trace"
 
 	"github.com/heroiclabs/nakama/api"
 
@@ -177,6 +178,7 @@ func StartApiServer(logger *zap.Logger, startupLogger *zap.Logger, db *sql.DB, j
 	grpcGatewayRouter := mux.NewRouter()
 	// Special case routes. Do NOT enable compression on WebSocket route, it results in "http: response.Write on hijacked connection" errors.
 	grpcGatewayRouter.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }).Methods("GET")
+	grpcGatewayRouter.HandleFunc("/nakama.api.Nakama/Healthcheck", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }).Methods("GET")
 	grpcGatewayRouter.HandleFunc("/ws", NewSocketWsAcceptor(logger, config, sessionRegistry, matchmaker, tracker, runtime, jsonpbMarshaler, jsonpbUnmarshaler, pipeline)).Methods("GET")
 
 	// Enable stats recording on all request paths except:
