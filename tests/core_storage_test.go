@@ -65,7 +65,7 @@ func TestStorageWriteRuntimeGlobalSingle(t *testing.T) {
 	assert.Len(t, readData.Objects, 1, "readData length was not 1")
 	assert.Equal(t, acks.Acks[0].Collection, readData.Objects[0].Collection, "collection did not match")
 	assert.Equal(t, acks.Acks[0].Key, readData.Objects[0].Key, "record did not match")
-	assert.Equal(t, "", readData.Objects[0].UserId, "user id was not nil")
+	assert.Equal(t, uuid.Nil.String(), readData.Objects[0].UserId, "user id was not nil")
 	assert.EqualValues(t, []byte(fmt.Sprintf("%x", md5.Sum([]byte((ops[0].Object.Value))))), readData.Objects[0].Version, "version did not match")
 	assert.Equal(t, int32(2), readData.Objects[0].PermissionRead, "permission read did not match")
 	assert.Equal(t, int32(1), readData.Objects[0].PermissionWrite, "permission write did not match")
@@ -152,7 +152,7 @@ func TestStorageWriteRuntimeGlobalSingleIfMatchNotExists(t *testing.T) {
 	assert.Nil(t, acks, "acks was not nil")
 	assert.Equal(t, codes.InvalidArgument, code, "code did not match")
 	assert.NotNil(t, err, "err was nil")
-	assert.Equal(t, "Storage write rejected - not found, version check failed, or permission denied.", err.Error(), "error message did not match")
+	assert.Equal(t, "Storage write rejected - version check failed.", err.Error(), "error message did not match")
 }
 
 func TestStorageWriteRuntimeGlobalSingleIfMatchExists(t *testing.T) {
@@ -256,7 +256,7 @@ func TestStorageWriteRuntimeGlobalSingleIfMatchExistsFail(t *testing.T) {
 	assert.Nil(t, acks, "acks was not nil")
 	assert.Equal(t, codes.InvalidArgument, code, "code did not match")
 	assert.NotNil(t, err, "err was nil")
-	assert.Equal(t, "Storage write rejected - not found, version check failed, or permission denied.", err.Error(), "error message did not match")
+	assert.Equal(t, "Storage write rejected - version check failed.", err.Error(), "error message did not match")
 }
 
 func TestStorageWriteRuntimeGlobalSingleIfNoneMatchNotExists(t *testing.T) {
@@ -334,7 +334,7 @@ func TestStorageWriteRuntimeGlobalSingleIfNoneMatchExists(t *testing.T) {
 	assert.Nil(t, acks, "acks was not nil")
 	assert.Equal(t, codes.InvalidArgument, code, "code did not match")
 	assert.NotNil(t, err, "err was nil")
-	assert.Equal(t, "Storage write rejected - not found, version check failed, or permission denied.", err.Error(), "error message did not match")
+	assert.Equal(t, "Storage write rejected - version check failed.", err.Error(), "error message did not match")
 }
 
 func TestStorageWriteRuntimeGlobalMultipleIfMatchNotExists(t *testing.T) {
@@ -370,7 +370,7 @@ func TestStorageWriteRuntimeGlobalMultipleIfMatchNotExists(t *testing.T) {
 	assert.Nil(t, acks, "acks was not nil")
 	assert.Equal(t, codes.InvalidArgument, code, "code did not match")
 	assert.NotNil(t, err, "err was nil")
-	assert.Equal(t, "Storage write rejected - not found, version check failed, or permission denied.", err.Error(), "error message did not match")
+	assert.Equal(t, "Storage write rejected - version check failed.", err.Error(), "error message did not match")
 }
 
 func TestStorageWritePipelineUserSingle(t *testing.T) {
@@ -539,7 +539,7 @@ func TestStorageWriteRuntimeGlobalMultipleSameKey(t *testing.T) {
 	assert.Len(t, readData.Objects, 1, "readData length was not 1")
 	assert.Equal(t, "testcollection", readData.Objects[0].Collection, "collection did not match")
 	assert.Equal(t, key, readData.Objects[0].Key, "key did not match")
-	assert.Equal(t, "", readData.Objects[0].UserId, "user id was not nil")
+	assert.Equal(t, uuid.Nil.String(), readData.Objects[0].UserId, "user id was not nil")
 	assert.EqualValues(t, []byte(fmt.Sprintf("%x", md5.Sum([]byte("{\"foo\":\"qux\"}")))), readData.Objects[0].Version, "version did not match")
 	assert.Equal(t, int32(1), readData.Objects[0].PermissionRead, "permission read did not match")
 	assert.Equal(t, int32(1), readData.Objects[0].PermissionWrite, "permission write did not match")
@@ -635,7 +635,7 @@ func TestStorageWritePipelineIfMatchNotExists(t *testing.T) {
 	assert.Nil(t, acks, "acks was not nil")
 	assert.Equal(t, codes.InvalidArgument, code, "code did not match")
 	assert.NotNil(t, err, "err was nil")
-	assert.Equal(t, "Storage write rejected - not found, version check failed, or permission denied.", err.Error(), "error message did not match")
+	assert.Equal(t, "Storage write rejected - version check failed.", err.Error(), "error message did not match")
 }
 
 func TestStorageWritePipelineIfMatchExistsFail(t *testing.T) {
@@ -687,7 +687,7 @@ func TestStorageWritePipelineIfMatchExistsFail(t *testing.T) {
 	assert.Nil(t, acks, "acks was not nil")
 	assert.Equal(t, codes.InvalidArgument, code, "code did not match")
 	assert.NotNil(t, err, "err was nil")
-	assert.Equal(t, "Storage write rejected - not found, version check failed, or permission denied.", err.Error(), "error message did not match")
+	assert.Equal(t, "Storage write rejected - version check failed.", err.Error(), "error message did not match")
 }
 
 func TestStorageWritePipelineIfMatchExists(t *testing.T) {
@@ -828,7 +828,7 @@ func TestStorageWritePipelineIfNoneMatchExists(t *testing.T) {
 	assert.Nil(t, acks, "acks was not nil")
 	assert.Equal(t, codes.InvalidArgument, code, "code did not match")
 	assert.NotNil(t, err, "err was nil")
-	assert.Equal(t, "Storage write rejected - not found, version check failed, or permission denied.", err.Error(), "error message did not match")
+	assert.Equal(t, "Storage write rejected - version check failed.", err.Error(), "error message did not match")
 }
 
 func TestStorageWritePipelinePermissionFail(t *testing.T) {
@@ -880,7 +880,7 @@ func TestStorageWritePipelinePermissionFail(t *testing.T) {
 	assert.Nil(t, acks, "acks was not nil")
 	assert.Equal(t, codes.InvalidArgument, code, "code did not match")
 	assert.NotNil(t, err, "err was nil")
-	assert.Equal(t, "Storage write rejected - not found, version check failed, or permission denied.", err.Error(), "error message did not match")
+	assert.Equal(t, "Storage write rejected - permission denied.", err.Error(), "error message did not match")
 }
 
 func TestStorageFetchRuntimeGlobalPrivate(t *testing.T) {
@@ -925,7 +925,7 @@ func TestStorageFetchRuntimeGlobalPrivate(t *testing.T) {
 	assert.Len(t, readData.Objects, 1, "readData length was not 1")
 	assert.Equal(t, acks.Acks[0].Collection, readData.Objects[0].Collection, "collection did not match")
 	assert.Equal(t, acks.Acks[0].Key, readData.Objects[0].Key, "record did not match")
-	assert.Equal(t, "", readData.Objects[0].UserId, "user id was not nil")
+	assert.Equal(t, uuid.Nil.String(), readData.Objects[0].UserId, "user id was not nil")
 	assert.EqualValues(t, []byte(fmt.Sprintf("%x", md5.Sum([]byte((ops[0].Object.Value))))), readData.Objects[0].Version, "version did not match")
 	assert.Equal(t, int32(0), readData.Objects[0].PermissionRead, "permission read did not match")
 	assert.Equal(t, int32(0), readData.Objects[0].PermissionWrite, "permission write did not match")
@@ -978,7 +978,7 @@ func TestStorageFetchRuntimeMixed(t *testing.T) {
 
 	assert.Equal(t, acks.Acks[0].Collection, readData.Objects[0].Collection, "collection did not match")
 	assert.Equal(t, acks.Acks[0].Key, readData.Objects[0].Key, "record did not match")
-	assert.Equal(t, "", readData.Objects[0].UserId, "user id was not nil")
+	assert.Equal(t, uuid.Nil.String(), readData.Objects[0].UserId, "user id was not nil")
 	assert.EqualValues(t, []byte(fmt.Sprintf("%x", md5.Sum([]byte((ops[0].Object.Value))))), readData.Objects[0].Version, "version did not match")
 	assert.Equal(t, int32(0), readData.Objects[0].PermissionRead, "permission read did not match")
 	assert.Equal(t, int32(0), readData.Objects[0].PermissionWrite, "permission write did not match")

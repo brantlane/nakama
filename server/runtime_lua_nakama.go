@@ -1308,7 +1308,8 @@ func (n *RuntimeLuaNakamaModule) authenticateFacebook(l *lua.LState) int {
 
 	// Import friends if requested.
 	if importFriends {
-		importFacebookFriends(l.Context(), n.logger, n.db, n.router, n.socialClient, uuid.FromStringOrNil(dbUserID), dbUsername, token, false)
+		// Errors are logged before this point and failure here does not invalidate the whole operation.
+		_ = importFacebookFriends(l.Context(), n.logger, n.db, n.router, n.socialClient, uuid.FromStringOrNil(dbUserID), dbUsername, token, false)
 	}
 
 	l.Push(lua.LString(dbUserID))
@@ -1329,8 +1330,8 @@ func (n *RuntimeLuaNakamaModule) authenticateGameCenter(l *lua.LState) int {
 		l.ArgError(2, "expects bundle ID string")
 		return 0
 	}
-	timestamp := l.CheckInt64(3)
-	if timestamp == 0 {
+	ts := l.CheckInt64(3)
+	if ts == 0 {
 		l.ArgError(3, "expects timestamp value")
 		return 0
 	}
@@ -1365,7 +1366,7 @@ func (n *RuntimeLuaNakamaModule) authenticateGameCenter(l *lua.LState) int {
 	// Parse create flag, if any.
 	create := l.OptBool(8, true)
 
-	dbUserID, dbUsername, created, err := AuthenticateGameCenter(l.Context(), n.logger, n.db, n.socialClient, playerID, bundleID, timestamp, salt, signature, publicKeyUrl, username, create)
+	dbUserID, dbUsername, created, err := AuthenticateGameCenter(l.Context(), n.logger, n.db, n.socialClient, playerID, bundleID, ts, salt, signature, publicKeyUrl, username, create)
 	if err != nil {
 		l.RaiseError("error authenticating: %v", err.Error())
 		return 0
@@ -1530,7 +1531,7 @@ func (n *RuntimeLuaNakamaModule) accountGetId(l *lua.LState) int {
 		return 0
 	}
 
-	account, err := GetAccount(l.Context(), n.logger, n.db, n.tracker, userID)
+	account, _, err := GetAccount(l.Context(), n.logger, n.db, n.tracker, userID)
 	if err != nil {
 		l.RaiseError("failed to get account: %s", err.Error())
 		return 0
@@ -4140,6 +4141,8 @@ func (n *RuntimeLuaNakamaModule) leaderboardDelete(l *lua.LState) int {
 	if err := n.leaderboardCache.Delete(l.Context(), id); err != nil {
 		l.RaiseError("error deleting leaderboard: %v", err.Error())
 	}
+
+	n.leaderboardScheduler.Update()
 	return 0
 }
 
@@ -4454,8 +4457,8 @@ func (n *RuntimeLuaNakamaModule) tournamentCreate(l *lua.LState) int {
 		return 0
 	}
 	startTime := l.OptInt(10, 0)
-	if startTime != 0 && startTime < int(time.Now().UTC().Unix()) {
-		l.ArgError(10, "startTime must be >= current time. Use 0 to indicate a tournament that starts immediately.")
+	if startTime < 0 {
+		l.ArgError(10, "startTime must be >= 0.")
 		return 0
 	}
 	endTime := l.OptInt(11, 0)
@@ -4488,7 +4491,7 @@ func (n *RuntimeLuaNakamaModule) tournamentDelete(l *lua.LState) int {
 		return 0
 	}
 
-	if err := TournamentDelete(l.Context(), n.logger, n.leaderboardCache, n.rankCache, n.leaderboardScheduler, id); err != nil {
+	if err := TournamentDelete(l.Context(), n.leaderboardCache, n.rankCache, n.leaderboardScheduler, id); err != nil {
 		l.RaiseError("error deleting tournament: %v", err.Error())
 	}
 	return 0
@@ -4689,6 +4692,7 @@ func (n *RuntimeLuaNakamaModule) tournamentRecordWrite(l *lua.LState) int {
 	record, err := TournamentRecordWrite(l.Context(), n.logger, n.db, n.leaderboardCache, n.rankCache, id, userID, username, score, subscore, metadataStr)
 	if err != nil {
 		l.RaiseError("error writing tournament record: %v", err.Error())
+		return 0
 	}
 
 	recordTable := l.CreateTable(0, 10)
@@ -4743,7 +4747,13 @@ func (n *RuntimeLuaNakamaModule) tournamentRecordsHaystack(l *lua.LState) int {
 		return 0
 	}
 
-	records, err := TournamentRecordsHaystack(l.Context(), n.logger, n.db, n.leaderboardCache, n.rankCache, id, userID, limit)
+	expiry := l.OptInt(4, 0)
+	if expiry < 0 {
+		l.ArgError(4, "expiry should be time since epoch in seconds and has to be a positive integer")
+		return 0
+	}
+
+	records, err := TournamentRecordsHaystack(l.Context(), n.logger, n.db, n.leaderboardCache, n.rankCache, id, userID, limit, int64(expiry))
 	if err != nil {
 		l.RaiseError("error listing tournament records haystack: %v", err.Error())
 		return 0

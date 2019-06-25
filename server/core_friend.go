@@ -25,11 +25,10 @@ import (
 
 	"context"
 
-	"github.com/cockroachdb/cockroach-go/crdb"
 	"github.com/gofrs/uuid"
 	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/heroiclabs/nakama/api"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/pgtype"
 	"go.uber.org/zap"
 )
 
@@ -101,8 +100,8 @@ FROM users, user_edge WHERE id = destination_id AND source_id = $1`
 		var location sql.NullString
 		var timezone sql.NullString
 		var metadata []byte
-		var createTime pq.NullTime
-		var updateTime pq.NullTime
+		var createTime pgtype.Timestamptz
+		var updateTime pgtype.Timestamptz
 		var state sql.NullInt64
 
 		if err = rows.Scan(&id, &username, &displayName, &avatarURL, &lang, &location, &timezone, &metadata, &createTime, &updateTime, &state); err != nil {
@@ -159,7 +158,7 @@ func AddFriends(ctx context.Context, logger *zap.Logger, db *sql.DB, messageRout
 		return err
 	}
 
-	if err = crdb.ExecuteInTx(ctx, tx, func() error {
+	if err = ExecuteInTx(ctx, tx, func() error {
 		for id := range uniqueFriendIDs {
 			isFriendAccept, addFriendErr := addFriend(ctx, logger, tx, userID, id)
 			if addFriendErr == nil {
@@ -195,7 +194,8 @@ func AddFriends(ctx context.Context, logger *zap.Logger, db *sql.DB, messageRout
 		}}
 	}
 
-	NotificationSend(ctx, logger, db, messageRouter, notifications)
+	// Any error is already logged before it's returned here.
+	_ = NotificationSend(ctx, logger, db, messageRouter, notifications)
 
 	return nil
 }
@@ -233,7 +233,7 @@ OR (source_id = $2 AND destination_id = $1 AND state = 2)
 		return true, nil
 	}
 
-	position := time.Now().UTC().UnixNano()
+	position := fmt.Sprintf("%v", time.Now().UTC().UnixNano())
 
 	// If no edge updates took place, it's either a new invite being set up, or user was blocked off by friend.
 	_, err = tx.ExecContext(ctx, `
@@ -302,7 +302,7 @@ func DeleteFriends(ctx context.Context, logger *zap.Logger, db *sql.DB, currentU
 		return err
 	}
 
-	if err = crdb.ExecuteInTx(ctx, tx, func() error {
+	if err = ExecuteInTx(ctx, tx, func() error {
 		for id := range uniqueFriendIDs {
 			if deleteFriendErr := deleteFriend(ctx, logger, tx, currentUser, id); deleteFriendErr != nil {
 				return deleteFriendErr
@@ -357,7 +357,7 @@ func BlockFriends(ctx context.Context, logger *zap.Logger, db *sql.DB, currentUs
 		return err
 	}
 
-	if err = crdb.ExecuteInTx(ctx, tx, func() error {
+	if err = ExecuteInTx(ctx, tx, func() error {
 		for id := range uniqueFriendIDs {
 			if blockFriendErr := blockFriend(ctx, logger, tx, currentUser, id); blockFriendErr != nil {
 				return blockFriendErr
@@ -382,7 +382,8 @@ func blockFriend(ctx context.Context, logger *zap.Logger, tx *sql.Tx, userID uui
 		return err
 	}
 
-	position := time.Now().UTC().UnixNano()
+	position := fmt.Sprintf("%v", time.Now().UTC().UnixNano())
+
 	if rowsAffected, _ := res.RowsAffected(); rowsAffected == 0 {
 		// If there was no previous edge then create one.
 		query := `

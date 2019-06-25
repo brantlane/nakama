@@ -28,7 +28,7 @@ import (
 	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/heroiclabs/nakama/api"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/pgtype"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -62,8 +62,15 @@ func LeaderboardRecordsList(ctx context.Context, logger *zap.Logger, db *sql.DB,
 		now := time.Now().UTC()
 		if leaderboard.IsTournament() {
 			_, _, expiryTime = calculateTournamentDeadlines(leaderboard.StartTime, leaderboard.EndTime, int64(leaderboard.Duration), leaderboard.ResetSchedule, now)
+			if expiryTime != 0 && expiryTime <= now.Unix() {
+				// if the expiry time is in the past, we wont have any records to return
+				return &api.LeaderboardRecordList{}, nil
+			}
 		} else if leaderboard.ResetSchedule != nil {
 			expiryTime = leaderboard.ResetSchedule.Next(now).UTC().Unix()
+			if leaderboard.EndTime > 0 && expiryTime > leaderboard.EndTime {
+				expiryTime = leaderboard.EndTime
+			}
 		}
 	}
 
@@ -136,8 +143,8 @@ func LeaderboardRecordsList(ctx context.Context, logger *zap.Logger, db *sql.DB,
 		var dbNumScore int32
 		var dbMaxNumScore int32
 		var dbMetadata string
-		var dbCreateTime pq.NullTime
-		var dbUpdateTime pq.NullTime
+		var dbCreateTime pgtype.Timestamptz
+		var dbUpdateTime pgtype.Timestamptz
 		for rows.Next() {
 			if len(records) >= limitNumber {
 				nextCursor = &leaderboardRecordListCursor{
@@ -154,7 +161,7 @@ func LeaderboardRecordsList(ctx context.Context, logger *zap.Logger, db *sql.DB,
 
 			err = rows.Scan(&dbOwnerId, &dbUsername, &dbScore, &dbSubscore, &dbNumScore, &dbMaxNumScore, &dbMetadata, &dbCreateTime, &dbUpdateTime)
 			if err != nil {
-				rows.Close()
+				_ = rows.Close()
 				logger.Error("Error parsing listed leaderboard records", zap.Error(err))
 				return nil, err
 			}
@@ -199,7 +206,7 @@ func LeaderboardRecordsList(ctx context.Context, logger *zap.Logger, db *sql.DB,
 				}
 			}
 		}
-		rows.Close()
+		_ = rows.Close()
 
 		if incomingCursor != nil && !incomingCursor.IsNext {
 			// If this was a previous page listing, flip the results to their normal order and swap the cursors.
@@ -261,12 +268,12 @@ func LeaderboardRecordsList(ctx context.Context, logger *zap.Logger, db *sql.DB,
 		var dbNumScore int32
 		var dbMaxNumScore int32
 		var dbMetadata string
-		var dbCreateTime pq.NullTime
-		var dbUpdateTime pq.NullTime
+		var dbCreateTime pgtype.Timestamptz
+		var dbUpdateTime pgtype.Timestamptz
 		for rows.Next() {
 			err = rows.Scan(&dbOwnerId, &dbUsername, &dbScore, &dbSubscore, &dbNumScore, &dbMaxNumScore, &dbMetadata, &dbCreateTime, &dbUpdateTime)
 			if err != nil {
-				rows.Close()
+				_ = rows.Close()
 				logger.Error("Error parsing read leaderboard records", zap.Error(err))
 				return nil, err
 			}
@@ -292,7 +299,7 @@ func LeaderboardRecordsList(ctx context.Context, logger *zap.Logger, db *sql.DB,
 
 			ownerRecords = append(ownerRecords, record)
 		}
-		rows.Close()
+		_ = rows.Close()
 	}
 
 	// Bulk fill in the ranks of any owner records requested.
@@ -322,19 +329,20 @@ func LeaderboardRecordWrite(ctx context.Context, logger *zap.Logger, db *sql.DB,
 	}
 
 	var opSql string
+	var filterSql string
 	var scoreDelta int64
 	var subscoreDelta int64
 	var scoreAbs int64
 	var subscoreAbs int64
 	switch leaderboard.Operator {
 	case LeaderboardOperatorIncrement:
-		opSql = "score = leaderboard_record.score + $8::BIGINT, subscore = leaderboard_record.subscore + $9::BIGINT"
+		opSql = "score = leaderboard_record.score + $8, subscore = leaderboard_record.subscore + $9"
 		scoreDelta = score
 		subscoreDelta = subscore
 		scoreAbs = score
 		subscoreAbs = subscore
 	case LeaderboardOperatorSet:
-		opSql = "score = $8::BIGINT, subscore = $9::BIGINT"
+		opSql = "score = $8, subscore = $9"
 		scoreDelta = score
 		subscoreDelta = subscore
 		scoreAbs = score
@@ -344,10 +352,12 @@ func LeaderboardRecordWrite(ctx context.Context, logger *zap.Logger, db *sql.DB,
 	default:
 		if leaderboard.SortOrder == LeaderboardSortOrderAscending {
 			// Lower score is better.
-			opSql = "score = ((leaderboard_record.score + $8::BIGINT - abs(leaderboard_record.score - $8::BIGINT)) / 2)::BIGINT, subscore = ((leaderboard_record.subscore + $9::BIGINT - abs(leaderboard_record.subscore - $9::BIGINT)) / 2)::BIGINT"
+			opSql = "score = div((leaderboard_record.score + $8 - abs(leaderboard_record.score - $8)), 2), subscore = div((leaderboard_record.subscore + $9 - abs(leaderboard_record.subscore - $9)), 2)"
+			filterSql = " WHERE leaderboard_record.score > $8 OR leaderboard_record.subscore > $9"
 		} else {
 			// Higher score is better.
-			opSql = "score = ((leaderboard_record.score + $8::BIGINT + abs(leaderboard_record.score - $8::BIGINT)) / 2)::BIGINT, subscore = ((leaderboard_record.subscore + $9::BIGINT + abs(leaderboard_record.subscore - $9::BIGINT)) / 2)::BIGINT"
+			opSql = "score = div((leaderboard_record.score + $8 + abs(leaderboard_record.score - $8)), 2), subscore = div((leaderboard_record.subscore + $9 + abs(leaderboard_record.subscore - $9)), 2)"
+			filterSql = " WHERE leaderboard_record.score < $8 OR leaderboard_record.subscore < $9"
 		}
 		scoreDelta = score
 		subscoreDelta = subscore
@@ -358,7 +368,7 @@ func LeaderboardRecordWrite(ctx context.Context, logger *zap.Logger, db *sql.DB,
 	query := `INSERT INTO leaderboard_record (leaderboard_id, owner_id, username, score, subscore, metadata, expiry_time)
             VALUES ($1, $2, $3, $4, $5, COALESCE($6, '{}'::JSONB), $7)
             ON CONFLICT (owner_id, leaderboard_id, expiry_time)
-            DO UPDATE SET ` + opSql + `, num_score = leaderboard_record.num_score + 1, metadata = COALESCE($6, leaderboard_record.metadata), update_time = now()`
+            DO UPDATE SET ` + opSql + `, num_score = leaderboard_record.num_score + 1, metadata = COALESCE($6, leaderboard_record.metadata), update_time = now()` + filterSql
 	params := make([]interface{}, 0, 9)
 	params = append(params, leaderboardId, ownerId)
 	if username == "" {
@@ -386,8 +396,8 @@ func LeaderboardRecordWrite(ctx context.Context, logger *zap.Logger, db *sql.DB,
 	var dbNumScore int32
 	var dbMaxNumScore int32
 	var dbMetadata string
-	var dbCreateTime pq.NullTime
-	var dbUpdateTime pq.NullTime
+	var dbCreateTime pgtype.Timestamptz
+	var dbUpdateTime pgtype.Timestamptz
 	query = "SELECT username, score, subscore, num_score, max_num_score, metadata, create_time, update_time FROM leaderboard_record WHERE leaderboard_id = $1 AND owner_id = $2 AND expiry_time = $3"
 	err = db.QueryRowContext(ctx, query, leaderboardId, ownerId, time.Unix(expiryTime, 0).UTC()).Scan(&dbUsername, &dbScore, &dbSubscore, &dbNumScore, &dbMaxNumScore, &dbMetadata, &dbCreateTime, &dbUpdateTime)
 	if err != nil {
@@ -468,14 +478,14 @@ func LeaderboardRecordsDeleteAll(ctx context.Context, logger *zap.Logger, tx *sq
 	return nil
 }
 
-func LeaderboardRecordsHaystack(ctx context.Context, logger *zap.Logger, db *sql.DB, leaderboardCache LeaderboardCache, rankCache LeaderboardRankCache, leaderboardId string, ownerId uuid.UUID, limit int) ([]*api.LeaderboardRecord, error) {
+func LeaderboardRecordsHaystack(ctx context.Context, logger *zap.Logger, db *sql.DB, leaderboardCache LeaderboardCache, rankCache LeaderboardRankCache, leaderboardId string, ownerId uuid.UUID, limit int, expiry int64) ([]*api.LeaderboardRecord, error) {
 	leaderboard := leaderboardCache.Get(leaderboardId)
 	if leaderboard == nil {
 		return nil, ErrLeaderboardNotFound
 	}
 
 	sortOrder := leaderboard.SortOrder
-	expiryTime := time.Unix(0, 0).UTC()
+	expiryTime := time.Unix(expiry, 0).UTC()
 	if leaderboard.ResetSchedule != nil {
 		expiryTime = leaderboard.ResetSchedule.Next(time.Now().UTC()).UTC()
 	}
@@ -492,9 +502,9 @@ func getLeaderboardRecordsHaystack(ctx context.Context, logger *zap.Logger, db *
 	var dbNumScore int32
 	var dbMaxNumScore int32
 	var dbMetadata string
-	var dbCreateTime pq.NullTime
-	var dbUpdateTime pq.NullTime
-	var dbExpiryTime pq.NullTime
+	var dbCreateTime pgtype.Timestamptz
+	var dbUpdateTime pgtype.Timestamptz
+	var dbExpiryTime pgtype.Timestamptz
 
 	findQuery := `SELECT leaderboard_id, owner_id, username, score, subscore, num_score, max_num_score, metadata, create_time, update_time, expiry_time 
 		FROM leaderboard_record
@@ -622,9 +632,9 @@ func parseLeaderboardRecords(logger *zap.Logger, rows *sql.Rows) ([]*api.Leaderb
 	var dbNumScore int32
 	var dbMaxNumScore int32
 	var dbMetadata string
-	var dbCreateTime pq.NullTime
-	var dbUpdateTime pq.NullTime
-	var dbExpiryTime pq.NullTime
+	var dbCreateTime pgtype.Timestamptz
+	var dbUpdateTime pgtype.Timestamptz
+	var dbExpiryTime pgtype.Timestamptz
 	for rows.Next() {
 		if err := rows.Scan(&dbLeaderboardId, &dbOwnerId, &dbUsername, &dbScore, &dbSubscore, &dbNumScore, &dbMaxNumScore, &dbMetadata, &dbCreateTime, &dbUpdateTime, &dbExpiryTime); err != nil {
 			logger.Error("Could not execute leaderboard records list query", zap.Error(err))

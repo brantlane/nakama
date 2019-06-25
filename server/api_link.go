@@ -18,11 +18,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cockroachdb/cockroach-go/crdb"
 	"github.com/gofrs/uuid"
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/heroiclabs/nakama/api"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/net/context"
@@ -137,7 +136,7 @@ func (s *ApiServer) LinkDevice(ctx context.Context, in *api.AccountDevice) (*emp
 		return nil, status.Error(codes.Internal, "Error linking Device ID.")
 	}
 
-	err = crdb.ExecuteInTx(ctx, tx, func() error {
+	err = ExecuteInTx(ctx, tx, func() error {
 		var dbDeviceIdLinkedUser int64
 		err := tx.QueryRowContext(ctx, "SELECT COUNT(id) FROM user_device WHERE id = $1 AND user_id = $2 LIMIT 1", deviceID, userID).Scan(&dbDeviceIdLinkedUser)
 		if err != nil {
@@ -148,7 +147,7 @@ func (s *ApiServer) LinkDevice(ctx context.Context, in *api.AccountDevice) (*emp
 		if dbDeviceIdLinkedUser == 0 {
 			_, err = tx.ExecContext(ctx, "INSERT INTO user_device (id, user_id) VALUES ($1, $2)", deviceID, userID)
 			if err != nil {
-				if e, ok := err.(*pq.Error); ok && e.Code == dbErrorUniqueViolation {
+				if e, ok := err.(pgx.PgError); ok && e.Code == dbErrorUniqueViolation {
 					return StatusError(codes.AlreadyExists, "Device ID already in use.", err)
 				}
 				s.logger.Debug("Cannot link device ID.", zap.Error(err), zap.Any("input", in))

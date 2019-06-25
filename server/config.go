@@ -239,7 +239,7 @@ func CheckConfig(logger *zap.Logger, config Config) map[string]string {
 	}
 	if config.GetSession().EncryptionKey == "defaultencryptionkey" {
 		logger.Warn("WARNING: insecure default parameter value, change this for production!", zap.String("param", "session.encryption_key"))
-		configWarnings["socket.encryption_key"] = "Insecure default parameter value, change this for production!"
+		configWarnings["session.encryption_key"] = "Insecure default parameter value, change this for production!"
 	}
 	if config.GetRuntime().HTTPKey == "defaultkey" {
 		logger.Warn("WARNING: insecure default parameter value, change this for production!", zap.String("param", "runtime.http_key"))
@@ -547,8 +547,8 @@ func NewSocketConfig() *SocketConfig {
 		WriteTimeoutMs:       10 * 1000,
 		IdleTimeoutMs:        60 * 1000,
 		WriteWaitMs:          5000,
-		PongWaitMs:           10000,
-		PingPeriodMs:         8000,
+		PongWaitMs:           25000,
+		PingPeriodMs:         15000,
 		PingBackoffThreshold: 20,
 		OutgoingQueueSize:    64,
 		SSLCertificate:       "",

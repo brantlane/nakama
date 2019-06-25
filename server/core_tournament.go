@@ -23,13 +23,12 @@ import (
 	"errors"
 	"time"
 
-	"github.com/cockroachdb/cockroach-go/crdb"
 	"github.com/gofrs/uuid"
 	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/heroiclabs/nakama/api"
 	"github.com/heroiclabs/nakama/cronexpr"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/pgtype"
 	"go.uber.org/zap"
 )
 
@@ -63,17 +62,20 @@ func TournamentCreate(ctx context.Context, logger *zap.Logger, cache Leaderboard
 	return nil
 }
 
-func TournamentDelete(ctx context.Context, logger *zap.Logger, cache LeaderboardCache, rankCache LeaderboardRankCache, scheduler LeaderboardScheduler, leaderboardId string) error {
+func TournamentDelete(ctx context.Context, cache LeaderboardCache, rankCache LeaderboardRankCache, scheduler LeaderboardScheduler, leaderboardId string) error {
 	leaderboard := cache.Get(leaderboardId)
 	if leaderboard == nil {
 		// If it does not exist treat it as success.
 		return nil
 	}
-	// Allow deletion of non-tournament leaderboards here.
 
 	var expiryUnix int64
 	if leaderboard.ResetSchedule != nil {
 		expiryUnix = leaderboard.ResetSchedule.Next(time.Now().UTC()).UTC().Unix()
+	}
+
+	if leaderboard.EndTime > 0 && expiryUnix > leaderboard.EndTime {
+		expiryUnix = leaderboard.EndTime
 	}
 
 	if err := cache.Delete(ctx, leaderboardId); err != nil {
@@ -104,6 +106,9 @@ func TournamentAddAttempt(ctx context.Context, logger *zap.Logger, db *sql.DB, c
 	expiryTime := int64(0)
 	if leaderboard.ResetSchedule != nil {
 		expiryTime = leaderboard.ResetSchedule.Next(time.Now().UTC()).UTC().Unix()
+		if leaderboard.EndTime > 0 && expiryTime > leaderboard.EndTime {
+			expiryTime = leaderboard.EndTime
+		}
 	}
 
 	query := `UPDATE leaderboard_record SET max_num_score = (max_num_score + $1) WHERE leaderboard_id = $2 AND owner_id = $3 AND expiry_time = $4`
@@ -145,7 +150,7 @@ func TournamentJoin(ctx context.Context, logger *zap.Logger, db *sql.DB, cache L
 		return err
 	}
 
-	if err = crdb.ExecuteInTx(ctx, tx, func() error {
+	if err = ExecuteInTx(ctx, tx, func() error {
 		query := `INSERT INTO leaderboard_record 
 (leaderboard_id, owner_id, expiry_time, username, num_score, max_num_score) 
 VALUES 
@@ -198,19 +203,8 @@ func TournamentList(ctx context.Context, logger *zap.Logger, db *sql.DB, categor
 SELECT 
 id, sort_order, reset_schedule, metadata, create_time, category, description, duration, end_time, max_size, max_num_score, title, size, start_time
 FROM leaderboard
-WHERE duration > 0 AND start_time >= $1 AND end_time <= $2 AND category >= $3 AND category <= $4`
-
+WHERE duration > 0 AND category >= $1 AND category <= $2 AND start_time >= $3`
 	params := make([]interface{}, 0, 6)
-	if startTime >= 0 {
-		params = append(params, time.Unix(int64(startTime), 0).UTC())
-	} else {
-		params = append(params, time.Unix(0, 0).UTC())
-	}
-	if endTime >= 0 {
-		params = append(params, time.Unix(int64(endTime), 0).UTC())
-	} else {
-		params = append(params, time.Unix(0, 0).UTC())
-	}
 	if categoryStart >= 0 && categoryStart <= 127 {
 		params = append(params, categoryStart)
 	} else {
@@ -222,7 +216,26 @@ WHERE duration > 0 AND start_time >= $1 AND end_time <= $2 AND category >= $3 AN
 		params = append(params, 127)
 	}
 
-	// To ensure that there are more records, so the cursor is returned/
+	if startTime >= 0 {
+		params = append(params, time.Unix(int64(startTime), 0).UTC())
+	} else {
+		params = append(params, time.Unix(0, 0).UTC())
+	}
+
+	if endTime == 0 {
+		query += " AND end_time = $4"
+		params = append(params, time.Unix(0, 0).UTC())
+	} else if int64(endTime) < now.Unix() {
+		// if end time is set explicitly in the past
+		query += " AND end_time <= $4"
+		params = append(params, time.Unix(int64(endTime), 0).UTC())
+	} else {
+		// if end time is in the future, return both tournaments that end in the future as well as the ones that never end.
+		query += " AND (end_time <= $4 OR end_time = '1970-01-01 00:00:00 UTC')"
+		params = append(params, time.Unix(int64(endTime), 0).UTC())
+	}
+
+	// To ensure that there are more records, so the cursor is returned
 	params = append(params, limit+1)
 
 	if cursor != nil {
@@ -246,7 +259,7 @@ WHERE duration > 0 AND start_time >= $1 AND end_time <= $2 AND category >= $3 AN
 	for rows.Next() {
 		tournament, err := parseTournament(rows, now)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			logger.Error("Error parsing listed tournament records", zap.Error(err))
 			return nil, err
 		}
@@ -258,7 +271,7 @@ WHERE duration > 0 AND start_time >= $1 AND end_time <= $2 AND category >= $3 AN
 			newCursor.TournamentId = records[limit-1].Id
 		}
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	tournamentList := &api.TournamentList{
 		Tournaments: records,
@@ -266,7 +279,7 @@ WHERE duration > 0 AND start_time >= $1 AND end_time <= $2 AND category >= $3 AN
 
 	if newCursor.TournamentId != "" {
 		cursorBuf := new(bytes.Buffer)
-		if gob.NewEncoder(cursorBuf).Encode(newCursor); err != nil {
+		if err := gob.NewEncoder(cursorBuf).Encode(newCursor); err != nil {
 			logger.Error("Error creating tournament records list cursor", zap.Error(err))
 			return nil, err
 		}
@@ -297,13 +310,13 @@ func TournamentRecordWrite(ctx context.Context, logger *zap.Logger, db *sql.DB, 
 	var subscoreAbs int64
 	switch leaderboard.Operator {
 	case LeaderboardOperatorIncrement:
-		opSql = "score = leaderboard_record.score + $5::BIGINT, subscore = leaderboard_record.subscore + $6::BIGINT"
+		opSql = "score = leaderboard_record.score + $5, subscore = leaderboard_record.subscore + $6"
 		scoreDelta = score
 		subscoreDelta = subscore
 		scoreAbs = score
 		subscoreAbs = subscore
 	case LeaderboardOperatorSet:
-		opSql = "score = $5::BIGINT, subscore = $6::BIGINT"
+		opSql = "score = $5, subscore = $6"
 		scoreDelta = score
 		subscoreDelta = subscore
 		scoreAbs = score
@@ -313,10 +326,10 @@ func TournamentRecordWrite(ctx context.Context, logger *zap.Logger, db *sql.DB, 
 	default:
 		if leaderboard.SortOrder == LeaderboardSortOrderAscending {
 			// Lower score is better.
-			opSql = "score = ((leaderboard_record.score + $5::BIGINT - abs(leaderboard_record.score - $5::BIGINT)) / 2)::BIGINT, subscore = ((leaderboard_record.subscore + $6::BIGINT - abs(leaderboard_record.subscore - $6::BIGINT)) / 2)::BIGINT"
+			opSql = "score = div((leaderboard_record.score + $5 - abs(leaderboard_record.score - $5)), 2), subscore = div((leaderboard_record.subscore + $6 - abs(leaderboard_record.subscore - $6)), 2)"
 		} else {
 			// Higher score is better.
-			opSql = "score = ((leaderboard_record.score + $5::BIGINT + abs(leaderboard_record.score - $5::BIGINT)) / 2)::BIGINT, subscore = ((leaderboard_record.subscore + $6::BIGINT + abs(leaderboard_record.subscore - $6::BIGINT)) / 2)::BIGINT"
+			opSql = "score = div((leaderboard_record.score + $5 + abs(leaderboard_record.score - $5)), 2), subscore = div((leaderboard_record.subscore + $6 + abs(leaderboard_record.subscore - $6)), 2)"
 		}
 		scoreDelta = score
 		subscoreDelta = subscore
@@ -375,7 +388,7 @@ func TournamentRecordWrite(ctx context.Context, logger *zap.Logger, db *sql.DB, 
 			return nil, err
 		}
 
-		if err := crdb.ExecuteInTx(ctx, tx, func() error {
+		if err := ExecuteInTx(ctx, tx, func() error {
 			if err := tx.QueryRowContext(ctx, query, params...).Scan(&dbNumScore, &dbMaxNumScore); err != nil {
 				return err
 			}
@@ -415,8 +428,8 @@ func TournamentRecordWrite(ctx context.Context, logger *zap.Logger, db *sql.DB, 
 	var dbNumScore int32
 	var dbMaxNumScore int32
 	var dbMetadata string
-	var dbCreateTime pq.NullTime
-	var dbUpdateTime pq.NullTime
+	var dbCreateTime pgtype.Timestamptz
+	var dbUpdateTime pgtype.Timestamptz
 	query := "SELECT username, score, subscore, num_score, max_num_score, metadata, create_time, update_time FROM leaderboard_record WHERE leaderboard_id = $1 AND owner_id = $2 AND expiry_time = $3"
 	err := db.QueryRowContext(ctx, query, leaderboard.Id, ownerId, expiryTime).Scan(&dbUsername, &dbScore, &dbSubscore, &dbNumScore, &dbMaxNumScore, &dbMetadata, &dbCreateTime, &dbUpdateTime)
 	if err != nil {
@@ -449,7 +462,7 @@ func TournamentRecordWrite(ctx context.Context, logger *zap.Logger, db *sql.DB, 
 	return record, nil
 }
 
-func TournamentRecordsHaystack(ctx context.Context, logger *zap.Logger, db *sql.DB, leaderboardCache LeaderboardCache, rankCache LeaderboardRankCache, leaderboardId string, ownerId uuid.UUID, limit int) ([]*api.LeaderboardRecord, error) {
+func TournamentRecordsHaystack(ctx context.Context, logger *zap.Logger, db *sql.DB, leaderboardCache LeaderboardCache, rankCache LeaderboardRankCache, leaderboardId string, ownerId uuid.UUID, limit int, expiryOverride int64) ([]*api.LeaderboardRecord, error) {
 	leaderboard := leaderboardCache.Get(leaderboardId)
 	if leaderboard == nil {
 		return nil, ErrLeaderboardNotFound
@@ -457,14 +470,27 @@ func TournamentRecordsHaystack(ctx context.Context, logger *zap.Logger, db *sql.
 
 	sortOrder := leaderboard.SortOrder
 
-	_, _, expiry := calculateTournamentDeadlines(leaderboard.StartTime, leaderboard.EndTime, int64(leaderboard.Duration), leaderboard.ResetSchedule, time.Now().UTC())
-	expiryTime := time.Unix(expiry, 0).UTC()
+	expiry := expiryOverride
+	if expiry == 0 {
+		now := time.Now().UTC()
+		_, _, expiry = calculateTournamentDeadlines(leaderboard.StartTime, leaderboard.EndTime, int64(leaderboard.Duration), leaderboard.ResetSchedule, now)
+		if expiry != 0 && expiry <= now.Unix() {
+			// if the expiry time is in the past, we wont have any records to return
+			return make([]*api.LeaderboardRecord, 0), nil
+		}
+	}
 
+	expiryTime := time.Unix(expiry, 0).UTC()
 	return getLeaderboardRecordsHaystack(ctx, logger, db, rankCache, ownerId, limit, leaderboard.Id, sortOrder, expiryTime)
 }
 
 func calculateTournamentDeadlines(startTime, endTime, duration int64, resetSchedule *cronexpr.Expression, t time.Time) (int64, int64, int64) {
 	if resetSchedule != nil {
+		if t.Unix() < startTime {
+			// if startTime is in the future, always use startTime
+			t = time.Unix(startTime, 0).UTC()
+		}
+
 		schedules := resetSchedule.NextN(t, 2)
 		schedule0Unix := schedules[0].UTC().Unix()
 		schedule1Unix := schedules[1].UTC().Unix()
@@ -479,6 +505,12 @@ func calculateTournamentDeadlines(startTime, endTime, duration int64, resetSched
 			startActiveUnix = resetSchedule.Next(time.Unix(startTime, 0).UTC()).UTC().Unix()
 			endActiveUnix = startActiveUnix + duration
 			expiryUnix = startActiveUnix + (schedule1Unix - schedule0Unix)
+		} else if startTime > startActiveUnix {
+			startActiveUnix = startTime
+		}
+
+		if endTime > 0 && expiryUnix > endTime {
+			expiryUnix = endTime
 		}
 
 		return startActiveUnix, endActiveUnix, expiryUnix
@@ -497,16 +529,16 @@ func parseTournament(scannable Scannable, now time.Time) (*api.Tournament, error
 	var dbSortOrder int
 	var dbResetSchedule sql.NullString
 	var dbMetadata string
-	var dbCreateTime pq.NullTime
+	var dbCreateTime pgtype.Timestamptz
 	var dbCategory int
 	var dbDescription string
 	var dbDuration int
-	var dbEndTime pq.NullTime
+	var dbEndTime pgtype.Timestamptz
 	var dbMaxSize int
 	var dbMaxNumScore int
 	var dbTitle string
 	var dbSize int
-	var dbStartTime pq.NullTime
+	var dbStartTime pgtype.Timestamptz
 	err := scannable.Scan(&dbId, &dbSortOrder, &dbResetSchedule, &dbMetadata, &dbCreateTime,
 		&dbCategory, &dbDescription, &dbDuration, &dbEndTime, &dbMaxSize, &dbMaxNumScore, &dbTitle, &dbSize, &dbStartTime)
 	if err != nil {
@@ -521,9 +553,9 @@ func parseTournament(scannable Scannable, now time.Time) (*api.Tournament, error
 	canEnter := true
 	endTime := dbEndTime.Time.UTC().Unix()
 
-	_, endActiveUnix, expiryUnix := calculateTournamentDeadlines(dbStartTime.Time.UTC().Unix(), endTime, int64(dbDuration), resetSchedule, now)
+	startActive, endActiveUnix, expiryUnix := calculateTournamentDeadlines(dbStartTime.Time.UTC().Unix(), endTime, int64(dbDuration), resetSchedule, now)
 
-	if endActiveUnix < now.Unix() {
+	if startActive > now.Unix() || endActiveUnix < now.Unix() {
 		canEnter = false
 	}
 
@@ -547,6 +579,7 @@ func parseTournament(scannable Scannable, now time.Time) (*api.Tournament, error
 		CreateTime:  &timestamp.Timestamp{Seconds: dbCreateTime.Time.UTC().Unix()},
 		StartTime:   &timestamp.Timestamp{Seconds: dbStartTime.Time.UTC().Unix()},
 		Duration:    uint32(dbDuration),
+		StartActive: uint32(startActive),
 	}
 
 	if endTime > 0 {

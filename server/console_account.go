@@ -18,7 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/cockroachdb/cockroach-go/crdb"
+	"strconv"
+	"strings"
+
 	"github.com/gofrs/uuid"
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/golang/protobuf/ptypes/timestamp"
@@ -28,8 +30,6 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"strconv"
-	"strings"
 )
 
 func (s *ConsoleServer) DeleteAccount(ctx context.Context, in *console.AccountDeleteRequest) (*empty.Empty, error) {
@@ -113,7 +113,7 @@ func (s *ConsoleServer) ExportAccount(ctx context.Context, in *console.AccountId
 	}
 
 	// Core user account.
-	account, err := GetAccount(ctx, s.logger, s.db, nil, userID)
+	account, _, err := GetAccount(ctx, s.logger, s.db, nil, userID)
 	if err != nil {
 		if err == ErrAccountNotFound {
 			return nil, status.Error(codes.NotFound, "Account not found.")
@@ -209,13 +209,13 @@ func (s *ConsoleServer) ExportAccount(ctx context.Context, in *console.AccountId
 	return export, nil
 }
 
-func (s *ConsoleServer) GetAccount(ctx context.Context, in *console.AccountId) (*api.Account, error) {
+func (s *ConsoleServer) GetAccount(ctx context.Context, in *console.AccountId) (*console.Account, error) {
 	userID, err := uuid.FromString(in.Id)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "Requires a valid user ID.")
 	}
 
-	account, err := GetAccount(ctx, s.logger, s.db, s.tracker, userID)
+	account, disableTime, err := GetAccount(ctx, s.logger, s.db, s.tracker, userID)
 	if err != nil {
 		// Error already logged in function above.
 		if err == ErrAccountNotFound {
@@ -224,7 +224,12 @@ func (s *ConsoleServer) GetAccount(ctx context.Context, in *console.AccountId) (
 		return nil, status.Error(codes.Internal, "An error occurred while trying to retrieve user account.")
 	}
 
-	return account, nil
+	acc := &console.Account{Account: account}
+	if disableTime.Unix() != 0 {
+		acc.DisableTime = &timestamp.Timestamp{Seconds: disableTime.Unix()}
+	}
+
+	return acc, nil
 }
 
 func (s *ConsoleServer) GetFriends(ctx context.Context, in *console.AccountId) (*api.Friends, error) {
@@ -308,8 +313,11 @@ func (s *ConsoleServer) UpdateAccount(ctx context.Context, in *console.UpdateAcc
 	params := []interface{}{userID}
 
 	if v := in.Username; v != nil {
+		if len(v.Value) == 0 {
+			return nil, status.Error(codes.InvalidArgument, "Username cannot be empty.")
+		}
 		if invalidCharsRegex.MatchString(v.Value) {
-			return nil, status.Error(codes.InvalidArgument, "Username invalid, no spaces or control characters allowed.")
+			return nil, status.Error(codes.InvalidArgument, "Username cannot contain spaces or control characters.")
 		}
 		params = append(params, v.Value)
 		statements = append(statements, "username = $"+strconv.Itoa(len(params)))
@@ -324,9 +332,9 @@ func (s *ConsoleServer) UpdateAccount(ctx context.Context, in *console.UpdateAcc
 		}
 	}
 
-	if v := in.Metadata; v != nil {
+	if v := in.Metadata; v != nil && v.Value != "" {
 		var metadataMap map[string]interface{}
-		if err := json.Unmarshal([]byte(v.Value), metadataMap); err != nil {
+		if err := json.Unmarshal([]byte(v.Value), &metadataMap); err != nil {
 			return nil, status.Error(codes.InvalidArgument, "Metadata must be a valid JSON object.")
 		}
 		params = append(params, v.Value)
@@ -403,9 +411,9 @@ func (s *ConsoleServer) UpdateAccount(ctx context.Context, in *console.UpdateAcc
 		}
 	}
 
-	if v := in.Wallet; v != nil {
+	if v := in.Wallet; v != nil && v.Value != "" {
 		var walletMap map[string]interface{}
-		if err := json.Unmarshal([]byte(v.Value), walletMap); err != nil {
+		if err := json.Unmarshal([]byte(v.Value), &walletMap); err != nil {
 			return nil, status.Error(codes.InvalidArgument, "Wallet must be a valid JSON object.")
 		}
 		if err := checkWalletFormat(walletMap, ""); err != nil {
@@ -443,7 +451,7 @@ func (s *ConsoleServer) UpdateAccount(ctx context.Context, in *console.UpdateAcc
 		return nil, status.Error(codes.Internal, "An error occurred while trying to update the user.")
 	}
 
-	if err = crdb.ExecuteInTx(ctx, tx, func() error {
+	if err = ExecuteInTx(ctx, tx, func() error {
 		for oldDeviceID, newDeviceID := range in.DeviceIds {
 			if newDeviceID == "" {
 				query := `DELETE FROM user_device WHERE id = $2 AND user_id = $1

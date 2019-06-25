@@ -5,13 +5,53 @@ The format is based on [keep a changelog](http://keepachangelog.com) and this pr
 
 ## [Unreleased]
 ### Added
+- Explicitly set cache control header in all API responses.
+- Add support for CockroachDB 19.1.
+- Add tournament start active timestamp to the API response.
+- Add overridable expiry time when listing leaderboard/tournaments records.
+
+### Changed
+- Tournament start time can be set to past time.
+- Update GRPC (1.21.1), GRPC-Gateway (1.9.2), Protobuf (1.3.1), Mux (1.7.2), and OpenCensus (0.22.0) dependencies.
+- Use Go 1.12.6 as base Docker container image and native builds.
+- Move from dep to Go modules for dependency management.
+- Switch database driver from pq to pgx.
+- Update console handlebars (4.1.2) and js-yaml (3.13.1) dependencies.
+
+### Fixed
+- Fix delayed first time invocation of tournament and leaderboard callbacks.
+- Expired tournaments will no longer be listed nor any records will be returned.
+- Unlink device identifiers on console user account details page.
+
+## [2.5.1] - 2019-05-03
+### Changed
+- Storage object get operations now also return the user ID if the owner is the root user.
+- Status view on console no longer refreshes if server is not reachable.
+- Adjust default socket ping and pong heartbeat frequency.
+
+### Fixed
+- Display updated counters on console status page.
+- Render friend names on console user details page.
+- Render group names on console user details page.
+- Do not attempt to navigate to groups from console user details page.
+- Render changed wallet value after update on console user details page.
+- Display custom ID, email, and verification time on console user details page.
+- Add missing placeholder text to fields on console user details page.
+- Re-render the console storage view when deleting records.
+
+## [2.5.0] - 2019-04-25
+### Added
+- New developer console UI available on http://127.0.0.1:7351.
 - New Lua runtime functions to generate JWT tokens.
 - New Lua runtime functions to hash data using RSA SHA256.
+- Print max number of OS threads setting in server startup logs.
 
 ### Changed
 - Log more information when authoritative match handlers receive too many data messages.
 - Ensure storage writes and deletes are performed in a consistent order within each batch.
 - Ensure wallet updates are performed in a consistent order within each batch.
+- Increase default socket pong wait time.
+- Ensure leaderboard record metadata, number of scores, and update time are only changed during leaderboard write operations if the score or subscore change.
 
 ### Fixed
 - Storage write batches now correctly abort when any query in the batch fails.
@@ -44,6 +84,7 @@ The format is based on [keep a changelog](http://keepachangelog.com) and this pr
 - All schema and query statements that use the '1970-01-01 00:00:00' constant now specify UTC timezone.
 - Storage write error message are more descriptive for when values must be encoded JSON objects.
 - Storage listing operations now treat empty owner IDs as listing across all data rather than system-owned data.
+- Storage write operations now return more specific error messages.
 
 ### Fixed
 - CRON expressions for leaderboard and tournament resets now allow concurrent usage safely.

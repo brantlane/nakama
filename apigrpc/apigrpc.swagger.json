@@ -923,6 +923,28 @@
             }
           }
         },
+        "parameters": [
+          {
+            "name": "ids",
+            "description": "The account id of a user.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "usernames",
+            "description": "The account username of a user.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ],
         "tags": [
           "Nakama"
         ]
@@ -940,6 +962,28 @@
             }
           }
         },
+        "parameters": [
+          {
+            "name": "ids",
+            "description": "The account id of a user.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "usernames",
+            "description": "The account username of a user.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ],
         "tags": [
           "Nakama"
         ]
@@ -1124,6 +1168,16 @@
             "in": "path",
             "required": true,
             "type": "string"
+          },
+          {
+            "name": "user_ids",
+            "description": "The users to add.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         ],
         "tags": [
@@ -1176,6 +1230,16 @@
             "in": "path",
             "required": true,
             "type": "string"
+          },
+          {
+            "name": "user_ids",
+            "description": "The users to kick.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         ],
         "tags": [
@@ -1228,6 +1292,16 @@
             "in": "path",
             "required": true,
             "type": "string"
+          },
+          {
+            "name": "user_ids",
+            "description": "The users to promote.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         ],
         "tags": [
@@ -1305,6 +1379,14 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "expiry",
+            "description": "Expiry in seconds (since epoch) to begin fetching records from. Optional. 0 means from current time.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
           }
         ],
         "tags": [
@@ -1402,6 +1484,14 @@
             "in": "query",
             "required": false,
             "type": "integer",
+            "format": "int64"
+          },
+          {
+            "name": "expiry",
+            "description": "Expiry in seconds (since epoch) to begin fetching records from.",
+            "in": "query",
+            "required": false,
+            "type": "string",
             "format": "int64"
           }
         ],
@@ -1741,6 +1831,14 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "expiry",
+            "description": "Expiry in seconds (since epoch) to begin fetching records from.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
           }
         ],
         "tags": [
@@ -2005,6 +2103,14 @@
             "in": "query",
             "required": false,
             "type": "integer",
+            "format": "int64"
+          },
+          {
+            "name": "expiry",
+            "description": "Expiry in seconds (since epoch) to begin fetching records from.",
+            "in": "query",
+            "required": false,
+            "type": "string",
             "format": "int64"
           }
         ],
@@ -2939,12 +3045,12 @@
         "end_active": {
           "type": "integer",
           "format": "int64",
-          "description": "The UNIX timestamp when the tournament stops being active until next reset. A computed value."
+          "description": "The UNIX time when the tournament stops being active until next reset. A computed value."
         },
         "next_reset": {
           "type": "integer",
           "format": "int64",
-          "description": "The UNIX timestamp when the tournament is next playable. A computed value."
+          "description": "The UNIX time when the tournament is next playable. A computed value."
         },
         "metadata": {
           "type": "string",
@@ -2968,7 +3074,12 @@
         "duration": {
           "type": "integer",
           "format": "int64",
-          "description": "The UNIX timestamp for duration of a tournament."
+          "description": "Duration of the tournament in seconds."
+        },
+        "start_active": {
+          "type": "integer",
+          "format": "int64",
+          "description": "The UNIX time when the tournament start being active. A computed value."
         }
       },
       "description": "A tournament on the server."

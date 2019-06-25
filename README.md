@@ -82,6 +82,17 @@ Response:
 
 There's a number of official [client libraries](https://github.com/heroiclabs) available on GitHub with [documentation](https://heroiclabs.com/docs). The current platform/language support includes: .NET (in C#), Unity engine, JavaScript, Java (with Android), Unreal engine, and Swift (with iOS). If you'd like to contribute a client or request one let us know.
 
+## Developer Console
+
+Nakama has an embedded Web UI that is intended to be used by developers during their project development. You can navigate to it on your browser on [http://127.0.0.1:7351](http://127.0.0.1:7351).
+
+<img src=".github/login.jpg?raw=true" title="Login view" width="125" align="left">
+<img src=".github/status.jpg?raw=true" title="Status view" width="125" align="left">
+<img src=".github/users.jpg?raw=true" title="Users listing" width="125" align="left">
+<img src=".github/user_details.jpg?raw=true" title="User detail view" width="125" align="left">
+<img src=".github/storage.jpg?raw=true" title="Storage record view" width="125" align="left">
+<img src=".github/config.jpg?raw=true" title="Configuration view" width="125">
+
 ## Deployment
 
 Nakama can be deployed to any cloud provider such as Google Cloud, Azure, AWS, Digital Ocean, Heroku, or your own private cloud. You should setup and provision separate nodes for Nakama and CockroachDB.

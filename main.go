@@ -36,7 +36,7 @@ import (
 	"github.com/heroiclabs/nakama/migrate"
 	"github.com/heroiclabs/nakama/server"
 	"github.com/heroiclabs/nakama/social"
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/stdlib"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -60,7 +60,6 @@ var (
 )
 
 func main() {
-	//startedAt := int64(time.Nanosecond) * time.Now().UTC().UnixNano() / int64(time.Millisecond)
 	semver := fmt.Sprintf("%s+%s", version, commitID)
 	// Always set default timeout on HTTP client.
 	http.DefaultClient.Timeout = 1500 * time.Millisecond
@@ -84,7 +83,7 @@ func main() {
 	configWarnings := server.CheckConfig(logger, config)
 
 	startupLogger.Info("Nakama starting")
-	startupLogger.Info("Node", zap.String("name", config.GetName()), zap.String("version", semver), zap.String("runtime", runtime.Version()), zap.Int("cpu", runtime.NumCPU()))
+	startupLogger.Info("Node", zap.String("name", config.GetName()), zap.String("version", semver), zap.String("runtime", runtime.Version()), zap.Int("cpu", runtime.NumCPU()), zap.Int("proc", runtime.GOMAXPROCS(0)))
 	startupLogger.Info("Data directory", zap.String("path", config.GetDataDir()))
 	startupLogger.Info("Database connections", zap.Strings("dsns", config.GetDatabase().Addresses))
 
@@ -103,7 +102,7 @@ func main() {
 	tracker := server.StartLocalTracker(logger, config, sessionRegistry, jsonpbMarshaler)
 	router := server.NewLocalMessageRouter(sessionRegistry, tracker, jsonpbMarshaler)
 	leaderboardCache := server.NewLocalLeaderboardCache(logger, startupLogger, db)
-	leaderboardRankCache := server.NewLocalLeaderboardRankCache(logger, startupLogger, db, config.GetLeaderboard(), leaderboardCache)
+	leaderboardRankCache := server.NewLocalLeaderboardRankCache(startupLogger, db, config.GetLeaderboard(), leaderboardCache)
 	leaderboardScheduler := server.NewLocalLeaderboardScheduler(logger, db, leaderboardCache, leaderboardRankCache)
 	matchRegistry := server.NewLocalMatchRegistry(logger, startupLogger, config, tracker, router, config.GetName())
 	tracker.SetMatchJoinListener(matchRegistry.Join)
@@ -121,12 +120,12 @@ func main() {
 	metrics := server.NewMetrics(logger, startupLogger, config, metricsExporter)
 	statusHandler := server.NewLocalStatusHandler(logger, sessionRegistry, matchRegistry, tracker, metricsExporter, config.GetName())
 
-	consoleServer := server.StartConsoleServer(logger, startupLogger, db, config, tracker, statusHandler, configWarnings)
+	consoleServer := server.StartConsoleServer(logger, startupLogger, db, config, tracker, statusHandler, configWarnings, semver)
 	apiServer := server.StartApiServer(logger, startupLogger, db, jsonpbMarshaler, jsonpbUnmarshaler, config, socialClient, leaderboardCache, leaderboardRankCache, sessionRegistry, matchRegistry, matchmaker, tracker, router, pipeline, runtime)
 
 	gaenabled := len(os.Getenv("NAKAMA_TELEMETRY")) < 1
 	cookie := newOrLoadCookie(config)
-	gacode := "UA-89792135-1"
+	const gacode = "UA-89792135-1"
 	var telemetryClient *http.Client
 	if gaenabled {
 		telemetryClient = &http.Client{
@@ -184,7 +183,7 @@ func main() {
 	sessionRegistry.Stop()
 
 	if gaenabled {
-		ga.SendSessionStop(telemetryClient, gacode, cookie)
+		_ = ga.SendSessionStop(telemetryClient, gacode, cookie)
 	}
 
 	startupLogger.Info("Shutdown complete")
@@ -212,7 +211,7 @@ func dbConnect(multiLogger *zap.Logger, config server.Config) (*sql.DB, string) 
 	}
 
 	multiLogger.Debug("Complete database connection URL", zap.String("raw_url", parsedUrl.String()))
-	db, err := sql.Open("postgres", parsedUrl.String())
+	db, err := sql.Open("pgx", parsedUrl.String())
 	if err != nil {
 		multiLogger.Fatal("Error connecting to database", zap.Error(err))
 	}
@@ -253,7 +252,7 @@ func runTelemetry(httpc *http.Client, gacode string, cookie string) {
 	if ga.SendEvent(httpc, gacode, cookie, &ga.Event{Ec: "version", Ea: fmt.Sprintf("%s+%s", version, commitID)}) != nil {
 		return
 	}
-	ga.SendEvent(httpc, gacode, cookie, &ga.Event{Ec: "variant", Ea: "nakama"})
+	_ = ga.SendEvent(httpc, gacode, cookie, &ga.Event{Ec: "variant", Ea: "nakama"})
 }
 
 func newOrLoadCookie(config server.Config) string {
@@ -262,7 +261,7 @@ func newOrLoadCookie(config server.Config) string {
 	cookie := uuid.FromBytesOrNil(b)
 	if err != nil || cookie == uuid.Nil {
 		cookie = uuid.Must(uuid.NewV4())
-		ioutil.WriteFile(filePath, cookie.Bytes(), 0644)
+		_ = ioutil.WriteFile(filePath, cookie.Bytes(), 0644)
 	}
 	return cookie.String()
 }
